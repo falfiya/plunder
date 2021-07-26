@@ -1,10 +1,22 @@
+/*
+author - coalpha
+
+Just some quick info before we start.
+
+_rh - read  head; a pointer that we'll be reading from
+_wh - write head; a pointer that we'll be writing to
+
+Why are you using so many code blocks?
+
+For pointless stack control. A lot of these variables don't actually need to
+live that long and I'm fine with letting something else use the stack space.
+*/
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shlobj.h>
 #include <winternl.h>
 
 #define STATUS_SUCCESS 0
-// undocumented system call moment
 __kernel_entry NTSTATUS NTAPI NtGetNextProcess(
    _In_  HANDLE      ProcessHandle,
    _In_  ACCESS_MASK DesiredAccess,
@@ -13,6 +25,7 @@ __kernel_entry NTSTATUS NTAPI NtGetNextProcess(
    _Out_ PHANDLE     NewProcessHandle
 );
 
+/// Result is gonna look something like "C:\Users\User\AppData\Local"
 inline PWSTR GetLocalAppData() {
    PWSTR out;
    if (SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &out) != S_OK) {
@@ -22,7 +35,7 @@ inline PWSTR GetLocalAppData() {
 }
 
 #define DWORD_PTR *(DWORD *)
-#define QWORD_PTR *(size_t *)
+#define QWORD_PTR *(unsigned long long *)
 
 int start(void) {
    HANDLE const hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -38,20 +51,15 @@ int start(void) {
       || hHeap   == INVALID_HANDLE_VALUE
    ) return GetLastError();
 
-   PWSTR iobuf = HeapAlloc(
-      hHeap,
-      HEAP_GENERATE_EXCEPTIONS,
-      HEAP_SIZE
-   );
-   /* iobuf write head */
+   PWSTR iobuf = HeapAlloc(hHeap, HEAP_GENERATE_EXCEPTIONS, HEAP_SIZE);
    PWSTR iobuf_wh = iobuf;
 
    // Before we start deleting files, we print out the list of files that are
    // going to be deleted. Each icon cache path is going to be stored in the
    // iobuf and will be delimited by newlines. Since newlines can occur in
    // paths, though the really shouldn't in this case, we're going to store a
-   // list of pointers to the beginning of each icon cache in here.
-   // this will start at iobuf offset 0x4000.
+   // list of pointers to each newline that should be changed into null when the
+   // time comes to actually delete them.
    PWSTR *iconcache_end = (PWSTR *) (iobuf + 0x4000 / sizeof(WCHAR));
    size_t iconcache_count = 0;
 
@@ -70,8 +78,6 @@ int start(void) {
       PWSTR search_path;
       {
          PCWSTR const local_appdata = GetLocalAppData();
-         // local is "C:\Users\User\AppData\Local"
-
          #define mSubdir L"\\Microsoft\\Windows\\Explorer\\*"
          {
             // unfortunately, we do need to figure out the length of this since
@@ -111,12 +117,14 @@ int start(void) {
       do {
          PCWSTR name_rh = file.cFileName;
 
+         // if file.cFileName does not start with "iconcache_"
          if (QWORD_PTR name_rh != QWORD_PTR L"icon") continue; name_rh += 4;
          if (QWORD_PTR name_rh != QWORD_PTR L"cach") continue; name_rh += 4;
          if (DWORD_PTR name_rh != DWORD_PTR L"e_"  ) continue; name_rh += 2;
 
          while (*name_rh) name_rh++;
 
+         // if file.cFileName does not end with ".db"
          if (QWORD_PTR (name_rh - 3) != QWORD_PTR L".db") continue;
 
          for (
@@ -136,6 +144,8 @@ int start(void) {
       } while (FindNextFileW(hFind, &file));
    }
 
+   // Close explorer and delete the icon cache?
+   // Press 'y' to continue...
    QWORD_PTR iobuf_wh = QWORD_PTR L"Clos" ; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"e ex" ; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"plor" ; iobuf_wh += 4;
@@ -154,14 +164,16 @@ int start(void) {
    QWORD_PTR iobuf_wh = QWORD_PTR L"nue." ; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"..\n" ; iobuf_wh += 3;
 
-   DWORD num_chars_written;
-   WriteConsoleW(
-      hStdout,
-      iobuf,
-      iobuf_wh - iobuf,
-      &num_chars_written,
-      NULL
-   );
+   {
+      DWORD num_chars_written;
+      WriteConsoleW(
+         hStdout,
+         iobuf,
+         iobuf_wh - iobuf,
+         &num_chars_written,
+         NULL
+      );
+   }
 
    SetConsoleMode(hStdin, 0
       | ENABLE_INSERT_MODE
@@ -197,7 +209,7 @@ int start(void) {
       | ENABLE_QUICK_EDIT_MODE
    );
 
-   // kill explorer
+   // kill explorer using undocumented system calls
    {
       #define fsize sizeof(UNICODE_STRING) + MAX_PATH
       UNICODE_STRING *f = _alloca(fsize);
@@ -226,6 +238,7 @@ int start(void) {
             f->Buffer++;
          }
 
+         // if process executable path does not end with "Windows\explorer.exe"
          if (QWORD_PTR (f->Buffer - 4 * 1) != QWORD_PTR L".exe" ) continue;
          if (QWORD_PTR (f->Buffer - 4 * 2) != QWORD_PTR L"orer" ) continue;
          if (QWORD_PTR (f->Buffer - 4 * 3) != QWORD_PTR L"expl" ) continue;
@@ -236,10 +249,23 @@ int start(void) {
       }
    }
 
+   // v iconcache_start
+   // v
+   // \Explorer\iconcache_16.db↵\Explorer\iconcache_32.db↵
+   //                          ^                        ^
+   //         iconcache_end[0] ^       iconcache_end[1] ^
    while (iconcache_count --> 0) {
+      // previously, these were newlines.
+      // DeleteFileW wants the path to be null terminated.
       **iconcache_end = L'\0';
       DeleteFileW(iconcache_start);
+
+      // The character after each iconcache_end is the start of the next icon
+      // cache path
       iconcache_start = *iconcache_end + 1;
+
+      // Instead of using a subscript, we're just going to directly increment
+      // the pointer.
       iconcache_end++;
    }
 
