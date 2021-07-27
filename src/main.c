@@ -63,6 +63,7 @@ int start(void) {
    PWSTR *iconcache_end = (PWSTR *) (iobuf + 0x4000 / sizeof(WCHAR));
    size_t iconcache_count = 0;
 
+   // "Going to delete these files:\n"
    QWORD_PTR iobuf_wh = QWORD_PTR L"Goin"; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"g to"; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L" del"; iobuf_wh += 4;
@@ -144,8 +145,8 @@ int start(void) {
       } while (FindNextFileW(hFind, &file));
    }
 
-   // Close explorer and delete the icon cache?
-   // Press 'y' to continue...
+   // "Close explorer and delete the icon cache?\n"
+   // "Press 'y' to continue...\n"
    QWORD_PTR iobuf_wh = QWORD_PTR L"Clos" ; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"e ex" ; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"plor" ; iobuf_wh += 4;
@@ -221,7 +222,7 @@ int start(void) {
          // we reach the explorer.exe process. In that case, we wouldn't be able
          // to tell the difference between the end of the process list and the
          // os refusing to give us a handle with those perms. It's better to
-         // just fail within the loop when we try to get it's executable.
+         // just fail within the loop when we try to get its executable.
          NtGetNextProcess(hProcess, MAXIMUM_ALLOWED, 0, 0, &hProcess)
          == STATUS_SUCCESS
       ) {
@@ -249,11 +250,12 @@ int start(void) {
       }
    }
 
+   // full paths truncated in this visualization:
    // v iconcache_start
    // v
    // \Explorer\iconcache_16.db↵\Explorer\iconcache_32.db↵
-   //                          ^                        ^
-   //         iconcache_end[0] ^       iconcache_end[1] ^
+   //                          ^                         ^
+   //         iconcache_end[0] ^        iconcache_end[1] ^
    while (iconcache_count --> 0) {
       // previously, these were newlines.
       // DeleteFileW wants the path to be null terminated.
@@ -261,7 +263,7 @@ int start(void) {
       DeleteFileW(iconcache_start);
 
       // The character after each iconcache_end is the start of the next icon
-      // cache path
+      // cache path.
       iconcache_start = *iconcache_end + 1;
 
       // Instead of using a subscript, we're just going to directly increment
