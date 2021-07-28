@@ -12,9 +12,9 @@ cflags += -fno-stack-check
 cflags += -fno-stack-protector
 cflags += -mno-stack-arg-probe
 cflags += -fuse-ld=lld-link
+cflags += -lkernel32
 cflags += -lshell32
-cflags += -Xlinker kernel32.lib
-cflags += -Xlinker ntdll.lib
+cflags += -lntdll
 cflags += -Xlinker /entry:start
 cflags += -Xlinker /nodefaultlib
 cflags += -Xlinker /subsystem:console
@@ -29,5 +29,4 @@ run: bin/clearicns.exe
 bin:
 	mkdir bin
 
-# 	$(rcedit) $@ --set-icon misc/icon.ico
 .PHONY: run

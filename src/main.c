@@ -25,19 +25,10 @@ __kernel_entry NTSTATUS NTAPI NtGetNextProcess(
    _Out_ PHANDLE     NewProcessHandle
 );
 
-/// Result is gonna look something like "C:\Users\User\AppData\Local"
-inline PWSTR GetLocalAppData() {
-   PWSTR out;
-   if (SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &out) != S_OK) {
-      ExitProcess(1);
-   }
-   return out;
-}
-
 #define DWORD_PTR *(DWORD *)
 #define QWORD_PTR *(unsigned long long *)
 
-int start(void) {
+void start(void) {
    HANDLE const hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
    HANDLE const hStdin = GetStdHandle(STD_INPUT_HANDLE);
 
@@ -49,7 +40,9 @@ int start(void) {
       || hStdout == INVALID_HANDLE_VALUE
       || hStdout == INVALID_HANDLE_VALUE
       || hHeap   == INVALID_HANDLE_VALUE
-   ) return GetLastError();
+   ) {
+      goto BAD_END;
+   }
 
    PWSTR iobuf = HeapAlloc(hHeap, HEAP_GENERATE_EXCEPTIONS, HEAP_SIZE);
    PWSTR iobuf_wh = iobuf;
@@ -78,7 +71,12 @@ int start(void) {
    {
       PWSTR search_path;
       {
-         PCWSTR const local_appdata = GetLocalAppData();
+         PWSTR local_appdata;
+         if (SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &local_appdata) != S_OK) {
+            ExitProcess(1);
+            __builtin_unreachable();
+         }
+
          #define mSubdir L"\\Microsoft\\Windows\\Explorer\\*"
          {
             // unfortunately, we do need to figure out the length of this since
@@ -93,7 +91,6 @@ int start(void) {
          }
          {
             PWSTR search_path_wh = search_path;
-            PWSTR subdir_rh = mSubdir;
 
             for (
                PCWSTR local_appdata_rh = local_appdata;
@@ -101,7 +98,11 @@ int start(void) {
                *search_path_wh++ = *local_appdata_rh++
             );
 
-            while (*subdir_rh) *search_path_wh++ = *subdir_rh++;
+            for (
+               PWSTR subdir_rh = mSubdir;
+               *subdir_rh;
+               *search_path_wh++ = *subdir_rh++
+            );
          }
       }
 
@@ -112,7 +113,7 @@ int start(void) {
 
       if (hFind == INVALID_HANDLE_VALUE) {
          // means the directory doesn't exist
-         return GetLastError();
+         goto BAD_END;
       }
 
       do {
@@ -166,12 +167,12 @@ int start(void) {
    QWORD_PTR iobuf_wh = QWORD_PTR L"..\n" ; iobuf_wh += 3;
 
    {
-      DWORD num_chars_written;
+      DWORD chars_written;
       WriteConsoleW(
          hStdout,
          iobuf,
          iobuf_wh - iobuf,
-         &num_chars_written,
+         &chars_written,
          NULL
       );
    }
@@ -185,7 +186,7 @@ int start(void) {
       WCHAR input;
       DWORD chars_verbed;
       if (!ReadConsoleW(hStdin, &input, 1, &chars_verbed, NULL)) {
-         return GetLastError();
+         goto BAD_END;
       }
 
       if (input != L'y') {
@@ -197,7 +198,7 @@ int start(void) {
             &chars_verbed,
             NULL
          );
-         return 0;
+         goto GOOD_END;
       }
    }
 
@@ -213,7 +214,7 @@ int start(void) {
    // kill explorer using undocumented system calls
    {
       #define fsize sizeof(UNICODE_STRING) + MAX_PATH
-      UNICODE_STRING *f = _alloca(fsize);
+      UNICODE_STRING *const f = _alloca(fsize);
 
       HANDLE hProcess = NULL;
       while (
@@ -271,5 +272,10 @@ int start(void) {
       iconcache_end++;
    }
 
-   return 0;
+   GOOD_END:
+   ExitProcess(0);
+   __builtin_unreachable();
+   BAD_END:
+   ExitProcess(GetLastError());
+   __builtin_unreachable();
 }
