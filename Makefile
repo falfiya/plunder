@@ -1,10 +1,15 @@
+n := plunder
 mode := release
 
 ifeq ($(mode), debug)
 	cflags += -g
-else
-	clags += -Ofast
 endif
+
+ifeq ($(mode), release)
+	cflags += -Ofast
+endif
+
+libpath := $(shell misc/winsdk.exe --type:lib --kit:um --arch:x64)
 
 cflags += -nostdlib
 cflags += -ffreestanding
@@ -18,12 +23,15 @@ cflags += -lntdll
 cflags += -Xlinker /entry:start
 cflags += -Xlinker /nodefaultlib
 cflags += -Xlinker /subsystem:console
-cflags += -Xlinker "/libpath:C:\Program Files (x86)\Windows Kits\10\Lib\10.0.19041.0\um\x64"
+cflags += -Xlinker /libpath:"$(libpath)"
 
-bin/clearicns.exe: src/main.c bin Makefile
+bin/$n.exe: src/$n.c bin Makefile
 	clang $< $(cflags) -o $@
+ifeq ($(mode), release)
+	llvm-strip $@
+endif
 
-run: bin/clearicns.exe
+run: bin/$n.exe
 	$<
 
 bin:

@@ -5,7 +5,7 @@
          "type": "lldb",
          "request": "launch",
          "name": "debug",
-         "program": "${workspaceFolder}/bin/clearicns.exe",
+         "program": "${workspaceFolder}/bin/plunder.exe",
          "args": [],
          "cwd": "${workspaceFolder}"
       }

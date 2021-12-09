@@ -3,21 +3,21 @@ author - coalpha
 
 Just some quick info before we start.
 
-_rh - read  head; a pointer that we'll be reading from
-_wh - write head; a pointer that we'll be writing to
+_rh - read  head: a pointer that we'll be reading from
+_wh - write head: a pointer that we'll be writing to
 
 Why are you using so many code blocks?
-
-For pointless stack control. A lot of these variables don't actually need to
-live that long and I'm fine with letting something else use the stack space.
+I dunno. It doesn't actually do anything. Originally it was for pointless stack
+control but when you think about how it gets translated into llvm-ir, it seems
+absolutely useless.
 */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <shlobj.h>
+#include <shlobj.h>   // only for SHGetKnownFolderPath
 #include <winternl.h>
 
 #define STATUS_SUCCESS 0
-__kernel_entry NTSTATUS NTAPI NtGetNextProcess(
+NTSYSAPI NTSTATUS NTAPI ZwGetNextProcess(
    _In_  HANDLE      ProcessHandle,
    _In_  ACCESS_MASK DesiredAccess,
    _In_  ULONG       HandleAttributes,
@@ -25,16 +25,19 @@ __kernel_entry NTSTATUS NTAPI NtGetNextProcess(
    _Out_ PHANDLE     NewProcessHandle
 );
 
+NTSYSAPI NTSTATUS NTAPI ZwTerminateProcess(
+   _In_ HANDLE       ProcessHandle OPTIONAL,
+   _In_ NTSTATUS     ExitStatus
+);
+
 #define DWORD_PTR *(DWORD *)
-#define QWORD_PTR *(unsigned long long *)
+#define QWORD unsigned long long
+#define QWORD_PTR *(QWORD *)
 
 void start(void) {
    HANDLE const hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
    HANDLE const hStdin = GetStdHandle(STD_INPUT_HANDLE);
-
-   // 16 KiB heap should be enough, what's that, like 4 pages?
-   #define HEAP_SIZE 0x5000
-   HANDLE const hHeap = HeapCreate(HEAP_GENERATE_EXCEPTIONS, HEAP_SIZE, 0);
+   HANDLE const hHeap = GetProcessHeap();
 
    if (0
       || hStdout == INVALID_HANDLE_VALUE
@@ -44,7 +47,10 @@ void start(void) {
       goto BAD_END;
    }
 
-   PWSTR iobuf = HeapAlloc(hHeap, HEAP_GENERATE_EXCEPTIONS, HEAP_SIZE);
+   PWSTR iobuf = HeapAlloc(hHeap, 0, 0x5000);
+   if (iobuf == NULL) {
+      goto BAD_END;
+   }
    PWSTR iobuf_wh = iobuf;
 
    // Before we start deleting files, we print out the list of files that are
@@ -84,11 +90,12 @@ void start(void) {
             PCWSTR local_end = local_appdata;
             while (*local_end) local_end++;
 
-            search_path = _alloca(0
+            search_path = __builtin_alloca(0
                + (local_end - local_appdata) * sizeof(WCHAR)
                + sizeof(mSubdir)
             );
          }
+         // copy it into the new memory made by search_path
          {
             PWSTR search_path_wh = search_path;
 
@@ -104,6 +111,9 @@ void start(void) {
                *search_path_wh++ = *subdir_rh++
             );
          }
+         // I sure hope COM frees the memory when the process exits.
+         // It would be pretty stupid if it didn't.
+         //CoTaskMemFree(local_appdata);
       }
 
       // search_path is "C:\Users\User\AppData\Local\Microsoft\Windows\Explorer\*"
@@ -119,7 +129,7 @@ void start(void) {
       do {
          PCWSTR name_rh = file.cFileName;
 
-         // if file.cFileName does not start with "iconcache_"
+         // if file.cFileName does not start with "iconcache_" skip it
          if (QWORD_PTR name_rh != QWORD_PTR L"icon") continue; name_rh += 4;
          if (QWORD_PTR name_rh != QWORD_PTR L"cach") continue; name_rh += 4;
          if (DWORD_PTR name_rh != DWORD_PTR L"e_"  ) continue; name_rh += 2;
@@ -164,10 +174,11 @@ void start(void) {
    QWORD_PTR iobuf_wh = QWORD_PTR L"to c" ; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"onti" ; iobuf_wh += 4;
    QWORD_PTR iobuf_wh = QWORD_PTR L"nue." ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"..\n" ; iobuf_wh += 3;
+   QWORD_PTR iobuf_wh = QWORD_PTR L"..\n>"; iobuf_wh += 4;
 
    {
       DWORD chars_written;
+      // we don't actually really care if this fails
       WriteConsoleW(
          hStdout,
          iobuf,
@@ -177,6 +188,7 @@ void start(void) {
       );
    }
 
+   // unbuffered input
    SetConsoleMode(hStdin, 0
       | ENABLE_INSERT_MODE
       | ENABLE_PROCESSED_INPUT
@@ -184,18 +196,18 @@ void start(void) {
 
    {
       WCHAR input;
-      DWORD chars_verbed;
-      if (!ReadConsoleW(hStdin, &input, 1, &chars_verbed, NULL)) {
+      DWORD charsRead;
+      if (!ReadConsoleW(hStdin, &input, 1, &charsRead, NULL)) {
          goto BAD_END;
       }
 
       if (input != L'y') {
-         #define mCanceled "Canceled...\n"
+         #define mCanceled L"Canceled...\n"
          WriteConsoleW(
             hStdout,
-            L"Canceled...\n",
-            sizeof("Canceled...\n") - 1,
-            &chars_verbed,
+            mCanceled,
+            sizeof(mCanceled) / sizeof(wchar_t) - 1,
+            NULL,
             NULL
          );
          goto GOOD_END;
@@ -214,7 +226,7 @@ void start(void) {
    // kill explorer using undocumented system calls
    {
       #define fsize sizeof(UNICODE_STRING) + MAX_PATH
-      UNICODE_STRING *const f = _alloca(fsize);
+      UNICODE_STRING *const f = __builtin_alloca(fsize);
 
       HANDLE hProcess = NULL;
       while (
@@ -224,30 +236,31 @@ void start(void) {
          // to tell the difference between the end of the process list and the
          // os refusing to give us a handle with those perms. It's better to
          // just fail within the loop when we try to get its executable.
-         NtGetNextProcess(hProcess, MAXIMUM_ALLOWED, 0, 0, &hProcess)
+         ZwGetNextProcess(hProcess, MAXIMUM_ALLOWED, 0, 0, &hProcess)
          == STATUS_SUCCESS
       ) {
          ULONG return_length;
-         if (NtQueryInformationProcess(
+         NTSTATUS res = NtQueryInformationProcess(
             hProcess,
             ProcessImageFileName,
             f,
             fsize,
             &return_length
-         ) != STATUS_SUCCESS) continue;
+         );
+         if (res != STATUS_SUCCESS) continue;
 
          while (*f->Buffer) {
             f->Buffer++;
          }
 
          // if process executable path does not end with "Windows\explorer.exe"
-         if (QWORD_PTR (f->Buffer - 4 * 1) != QWORD_PTR L".exe" ) continue;
-         if (QWORD_PTR (f->Buffer - 4 * 2) != QWORD_PTR L"orer" ) continue;
-         if (QWORD_PTR (f->Buffer - 4 * 3) != QWORD_PTR L"expl" ) continue;
-         if (QWORD_PTR (f->Buffer - 4 * 4) != QWORD_PTR L"ows\\") continue;
          if (QWORD_PTR (f->Buffer - 4 * 5) != QWORD_PTR L"Wind" ) continue;
+         if (QWORD_PTR (f->Buffer - 4 * 4) != QWORD_PTR L"ows\\") continue;
+         if (QWORD_PTR (f->Buffer - 4 * 3) != QWORD_PTR L"expl" ) continue;
+         if (QWORD_PTR (f->Buffer - 4 * 2) != QWORD_PTR L"orer" ) continue;
+         if (QWORD_PTR (f->Buffer - 4 * 1) != QWORD_PTR L".exe" ) continue;
 
-         TerminateProcess(hProcess, 0);
+         ZwTerminateProcess(hProcess, 0);
       }
    }
 
@@ -275,6 +288,7 @@ void start(void) {
    GOOD_END:
    ExitProcess(0);
    __builtin_unreachable();
+
    BAD_END:
    ExitProcess(GetLastError());
    __builtin_unreachable();
