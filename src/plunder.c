@@ -47,11 +47,12 @@ void start(void) {
       goto BAD_END;
    }
 
-   PWSTR iobuf = HeapAlloc(hHeap, 0, 0x5000);
-   if (iobuf == NULL) {
+   // replace this with page alloc
+   PWSTR obuf = HeapAlloc(hHeap, 0, 0x5000);
+   if (obuf == NULL) {
       goto BAD_END;
    }
-   PWSTR iobuf_wh = iobuf;
+   PWSTR obuf_wh = obuf;
 
    // Before we start deleting files, we print out the list of files that are
    // going to be deleted. Each icon cache path is going to be stored in the
@@ -59,20 +60,20 @@ void start(void) {
    // paths, though the really shouldn't in this case, we're going to store a
    // list of pointers to each newline that should be changed into null when the
    // time comes to actually delete them.
-   PWSTR *iconcache_end = (PWSTR *) (iobuf + 0x4000 / sizeof(WCHAR));
-   size_t iconcache_count = 0;
+   PWSTR *files_to_delete_end = (PWSTR *) (obuf + 0x4000 / sizeof(WCHAR));
+   size_t files_to_delete_count = 0;
 
    // "Going to delete these files:\n"
-   QWORD_PTR iobuf_wh = QWORD_PTR L"Goin"; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"g to"; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L" del"; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"ete "; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"thes"; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"e fi"; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"les:"; iobuf_wh += 4;
-   *iobuf_wh++ = L'\n';
+   QWORD_PTR obuf_wh = QWORD_PTR L"Goin"; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"g to"; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L" del"; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"ete "; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"thes"; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"e fi"; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"les:"; obuf_wh += 4;
+   *obuf_wh++ = L'\n';
 
-   PWSTR iconcache_start = iobuf_wh;
+   PWSTR files_to_delete_start = obuf_wh;
 
    {
       PWSTR search_path;
@@ -83,19 +84,37 @@ void start(void) {
             __builtin_unreachable();
          }
 
+         // About to do a little string concatenation
+         #define mIC     L"\\IconCache.db"
          #define mSubdir L"\\Microsoft\\Windows\\Explorer\\*"
+         // Print out the first one and get length
          {
             // unfortunately, we do need to figure out the length of this since
             // it's going to be part of search_path.
             PCWSTR local_end = local_appdata;
-            while (*local_end) local_end++;
+            while (TRUE) {
+               WCHAR curr = *local_end++;
+               if (curr == '\0') {
+                  break;
+               }
 
-            search_path = __builtin_alloca(0
-               + (local_end - local_appdata) * sizeof(WCHAR)
-               + sizeof(mSubdir)
-            );
+               *obuf_wh++ = curr;
+            }
+
+            // NOTE(2025):
+            // Just because you're right, it doesn't make this clear.
+            size_t local_appdata_sz = (local_end - local_appdata) * sizeof(WCHAR);
+
+            // Includes the null ptr
+            search_path = __builtin_alloca(local_appdata_sz + sizeof(mSubdir));
          }
-         // copy it into the new memory made by search_path
+
+         QWORD_PTR obuf_wh = QWORD_PTR L"\\Ico"; obuf_wh += 4;
+         QWORD_PTR obuf_wh = QWORD_PTR L"nCac" ; obuf_wh += 4;
+         QWORD_PTR obuf_wh = QWORD_PTR L"he.d" ; obuf_wh += 4;
+         DWORD_PTR obuf_wh = DWORD_PTR L"b\n"  ; obuf_wh += 2;
+
+         // copy it into the new memory
          {
             PWSTR search_path_wh = search_path;
 
@@ -105,11 +124,20 @@ void start(void) {
                *search_path_wh++ = *local_appdata_rh++
             );
 
-            for (
-               PWSTR subdir_rh = mSubdir;
-               *subdir_rh;
-               *search_path_wh++ = *subdir_rh++
-            );
+            // search_path += mSubdir
+            // for (
+            //    PWSTR subdir_rh = mSubdir;
+            //    *subdir_rh;
+            //    *search_path_wh++ = *subdir_rh++
+            // );
+            QWORD_PTR search_path_wh = QWORD_PTR L"\\Mic"; search_path_wh += 4;
+            QWORD_PTR search_path_wh = QWORD_PTR L"roso" ; search_path_wh += 4;
+            QWORD_PTR search_path_wh = QWORD_PTR L"ft\\W"; search_path_wh += 4;
+            QWORD_PTR search_path_wh = QWORD_PTR L"indo" ; search_path_wh += 4;
+            QWORD_PTR search_path_wh = QWORD_PTR L"ws\\E"; search_path_wh += 4;
+            QWORD_PTR search_path_wh = QWORD_PTR L"xplo" ; search_path_wh += 4;
+            QWORD_PTR search_path_wh = QWORD_PTR L"rer\\"; search_path_wh += 4;
+            DWORD_PTR search_path_wh = DWORD_PTR L"*"    ; search_path_wh += 2; // includes null ptr
          }
          // I sure hope COM frees the memory when the process exits.
          // It would be pretty stupid if it didn't.
@@ -118,6 +146,7 @@ void start(void) {
 
       // search_path is "C:\Users\User\AppData\Local\Microsoft\Windows\Explorer\*"
 
+      // Replace with NtQueryDirectoryFile
       WIN32_FIND_DATAW file;
       HANDLE hFind = FindFirstFileW(search_path, &file);
 
@@ -142,47 +171,47 @@ void start(void) {
          for (
             PCWSTR search_path_rh = search_path;
             *search_path_rh != L'*';
-            *iobuf_wh++ = *search_path_rh++
+            *obuf_wh++ = *search_path_rh++
          );
 
          for (
             name_rh = file.cFileName;
             *name_rh;
-            *iobuf_wh++ = *name_rh++
+            *obuf_wh++ = *name_rh++
          );
 
-         *iobuf_wh = L'\n';
-         iconcache_end[iconcache_count++] = iobuf_wh++;
+         *obuf_wh = L'\n';
+         files_to_delete_end[files_to_delete_count++] = obuf_wh++;
       } while (FindNextFileW(hFind, &file));
    }
 
    // "Close explorer and delete the icon cache?\n"
    // "Press 'y' to continue...\n"
-   QWORD_PTR iobuf_wh = QWORD_PTR L"Clos" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"e ex" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"plor" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"er a" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"nd d" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"elet" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"e th" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"e ic" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"on c" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"ache" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"?\nPr"; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"ess " ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"'y' " ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"to c" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"onti" ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"nue." ; iobuf_wh += 4;
-   QWORD_PTR iobuf_wh = QWORD_PTR L"..\n>"; iobuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"Clos" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"e ex" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"plor" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"er a" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"nd d" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"elet" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"e th" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"e ic" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"on c" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"ache" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"?\nPr"; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"ess " ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"'y' " ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"to c" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"onti" ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"nue." ; obuf_wh += 4;
+   QWORD_PTR obuf_wh = QWORD_PTR L"..\n>"; obuf_wh += 4;
 
    {
       DWORD chars_written;
       // we don't actually really care if this fails
       WriteConsoleW(
          hStdout,
-         iobuf,
-         iobuf_wh - iobuf,
+         obuf,
+         obuf_wh - obuf,
          &chars_written,
          NULL
       );
@@ -265,24 +294,24 @@ void start(void) {
    }
 
    // full paths truncated in this visualization:
-   // v iconcache_start
+   // v files_to_delete_start
    // v
    // \Explorer\iconcache_16.db↵\Explorer\iconcache_32.db↵
    //                          ^                         ^
-   //         iconcache_end[0] ^        iconcache_end[1] ^
-   while (iconcache_count --> 0) {
+   //         files_to_delete_end[0] ^        files_to_delete_end[1] ^
+   while (files_to_delete_count --> 0) {
       // previously, these were newlines.
       // DeleteFileW wants the path to be null terminated.
-      **iconcache_end = L'\0';
-      DeleteFileW(iconcache_start);
+      **files_to_delete_end = L'\0';
+      DeleteFileW(files_to_delete_start);
 
-      // The character after each iconcache_end is the start of the next icon
+      // The character after each files_to_delete_end is the start of the next icon
       // cache path.
-      iconcache_start = *iconcache_end + 1;
+      files_to_delete_start = *files_to_delete_end + 1;
 
       // Instead of using a subscript, we're just going to directly increment
       // the pointer.
-      iconcache_end++;
+      files_to_delete_end++;
    }
 
    GOOD_END:
